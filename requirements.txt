@@ -1,0 +1,11 @@
+# New England Heart, runtime deps (Python 3.11)
+pandas>=2.3,<3
+numpy>=2.0,<3
+pyarrow>=15
+scikit-learn>=1.4
+lightgbm>=4.5
+shap>=0.46
+chromadb>=1.5           # guideline RAG index
+duckdb>=1.0              # one-time timing extraction (scripts/build_timing.py)
+anthropic>=0.60          # required for drafting (precompute); viewing the app needs no key
+streamlit>=1.55

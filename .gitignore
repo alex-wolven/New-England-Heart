@@ -1,0 +1,22 @@
+# raw synthetic EHR data (large; not redistributed)
+data/
+# derived artifacts (regenerate with scripts/); keep the repo light
+artifacts/chroma/
+artifacts/*.pkl
+artifacts/substrate_*.parquet
+artifacts/message_queue.parquet
+artifacts/audit_log.csv
+# archived statin-era work (kept locally, not tracked)
+old silent risk/
+# python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+# secrets (API keys etc.)
+.env
+.env.*
+.streamlit/secrets.toml
+# OS / editor
+.DS_Store
+Thumbs.db
