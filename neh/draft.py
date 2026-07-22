@@ -80,6 +80,22 @@ def _enroll_count_intro(n, lang):
     return head + " outside the healthy range:"
 
 
+def _shift_intro(n, lang):
+    """Setback state intro: the current out-of-range panel, framed as measures that have shifted
+    (neutral direction; some may have improved), not the enrollment 'outside the healthy range'."""
+    if lang == "es":
+        head = {1: "Una de sus medidas recientes ha cambiado",
+                2: "Un par de sus medidas recientes han cambiado",
+                3: "Algunas de sus medidas recientes han cambiado"}.get(
+                    n, "Varias de sus medidas recientes han cambiado")
+        return head + ":"
+    head = {1: "One of your recent measures has shifted",
+            2: "A couple of your recent measures have shifted",
+            3: "A few of your recent measures have shifted"}.get(
+                n, "Several of your recent measures have shifted")
+    return head + ":"
+
+
 def _bullets(a, lang):
     """The hyphen bullet lines for this stage, exact."""
     stage = a["stage"]
@@ -103,9 +119,9 @@ def _skeleton(a, lang):
     elif stage == "progress":
         intro = _PROGRESS_INTRO[lang].format(date=a.get("prev_date") or "")
     elif stage == "setback":
-        # a newly out-of-range measure reads as "outside the healthy range" (no date); a change
-        # reads as "changed since {last contact date}"
-        intro = (_enroll_count_intro(len(a["vitals"]), lang) if a.get("vitals")
+        # vitals present => current out-of-range panel, framed as measures that have SHIFTED (not the
+        # enrollment "outside the healthy range"); a change-driven setback reads "changed since {date}"
+        intro = (_shift_intro(len(a["vitals"]), lang) if a.get("vitals")
                  else _SETBACK_INTRO[lang].format(date=a.get("prev_date") or ""))
     else:
         intro = _GRAD_INTRO[lang].format(date=a.get("prev_date") or "")

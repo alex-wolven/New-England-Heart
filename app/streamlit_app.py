@@ -53,9 +53,18 @@ def chip(text, color):
 
 
 def title_banner():
+    import base64
+    from pathlib import Path
+    heart_html = ""
+    heart_path = Path(__file__).resolve().parents[1] / "figures" / "heart.png"
+    if heart_path.exists():
+        b64 = base64.b64encode(heart_path.read_bytes()).decode()
+        heart_html = (f"<img src='data:image/png;base64,{b64}' "
+                      "style='height:2.6rem;margin-left:0.6rem;vertical-align:middle'/>")
     st.markdown(
-        "<div style='font-size:3rem;font-weight:800;color:#5a6b8c;letter-spacing:0.5px;"
-        "margin:0 0 0.4rem 0'>New England Heart</div>", unsafe_allow_html=True)
+        "<div style='display:flex;align-items:center;margin:0 0 0.4rem 0'>"
+        "<span style='font-size:3rem;font-weight:800;color:#000000;letter-spacing:0.5px'>"
+        "New England Heart</span>" + heart_html + "</div>", unsafe_allow_html=True)
 
 
 def status_of(item_id):

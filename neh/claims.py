@@ -33,10 +33,14 @@ HEALTHY = {
     "a1c":        (7.0, "high", "7.0% or under", "7.0% o menos", "hba1c"),
     "total_chol": (200, "high", "200 mg/dL or under", "200 mg/dL o menos", "total_chol"),
     "hdl":        (40, "low", "at least 40 mg/dL", "al menos 40 mg/dL", "hdl"),
-    # BMI is coached only at the clinical obesity line (>=30), not for merely-overweight, to keep
-    # the net actionable and avoid over-messaging. Framed around behaviors, not the number.
-    "bmi":        (30, "high", "under 30", "menos de 30", "bmi"),
+    # BMI: the healthy TARGET shown to patients is the true healthy line (<25, used for in-range).
+    # Weight is only REPORTED at the clinical obesity line (>=30, see _REPORT_THRESHOLD), so we do
+    # not message merely-overweight patients.
+    "bmi":        (25, "high", "under 25", "menos de 25", "bmi"),
 }
+# Threshold at which a vital is REPORTED as out of range (out_of_range_vitals). Defaults to the
+# healthy threshold; BMI is the exception, only surfaced at the clinical obesity line (>=30).
+_REPORT_THRESHOLD = {"bmi": 30.0}
 _VITAL_LABEL = {"bp": ("blood pressure", "presión arterial"), "ldl": ("LDL cholesterol", "colesterol LDL"),
                 "a1c": ("blood sugar (A1c)", "azúcar en sangre (A1c)"),
                 "total_chol": ("total cholesterol", "colesterol total"),
@@ -64,8 +68,11 @@ def out_of_range_vitals(pid: str, when, contrib_by_feat: dict) -> list:
             if not v or not _ok(metric, v["value"]):
                 continue
             dv = _dnum(metric, v["value"])  # displayed value
+            # report threshold: usually the healthy line, but BMI is only surfaced at obesity (30),
+            # so we never message merely-overweight patients (the healthy TARGET shown is still <25)
+            report_thr = _REPORT_THRESHOLD.get(metric, thr)
             # equal to threshold = healthy: high metrics unhealthy only above, low only below
-            unhealthy = (dv > thr) if direction == "high" else (dv < thr)
+            unhealthy = (dv > report_thr) if direction == "high" else (dv < report_thr)
             value, date, numbers = _fmt(metric, v["value"]), v["date"], [dv]
         if not unhealthy:
             continue
@@ -186,7 +193,7 @@ _TREND_META = {
                    "total cholesterol", "colesterol total"),
     "hdl":        ("low", "at least 40 mg/dL", "al menos 40 mg/dL",
                    "HDL cholesterol", "colesterol HDL"),
-    "bmi":        ("high", "under 30", "menos de 30", "weight (BMI)", "peso (IMC)"),
+    "bmi":        ("high", "under 25", "menos de 25", "weight (BMI)", "peso (IMC)"),
 }
 
 

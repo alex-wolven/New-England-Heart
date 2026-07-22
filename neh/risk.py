@@ -198,7 +198,11 @@ def feature_row_at(base_row: pd.Series, when: pd.Timestamp, age_ref_date=None) -
     age_ref_date: if given, age is HELD at the patient's age on that date instead of advanced to
     `when`. This is how the trajectory stages (progress / setback / graduation) isolate the
     MODIFIABLE component of risk: we freeze age at enrollment so the score moves only when the
-    coachable measures move. Enrollment/selection passes age_ref_date=None (real age)."""
+    coachable measures move. Enrollment/selection passes age_ref_date=None (real age).
+
+    A lab with no substrate reading as-of `when` is set to NaN (LightGBM handles missing) rather than
+    falling back to the base_row cohort-cutoff value, so a future reading never leaks into an earlier
+    visit's score or the clinician panel. (Non-lab features stay as-of the cohort cutoff.)"""
     x = base_row.copy()
     pid = base_row["patient"]
     cutoff = pd.Timestamp(base_row["cutoff_date"])
@@ -207,8 +211,7 @@ def feature_row_at(base_row: pd.Series, when: pd.Timestamp, age_ref_date=None) -
     x["age_at_cutoff"] = float(base_row["age_at_cutoff"]) - max(0.0, years)
     for metric, feat in _METRIC2FEAT.items():
         v = substrate.as_of(pid, metric, when)
-        if v is not None:
-            x[feat] = v["value"]
+        x[feat] = v["value"] if v is not None else float("nan")
     return x
 
 

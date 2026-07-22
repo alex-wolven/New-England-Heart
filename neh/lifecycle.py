@@ -3,7 +3,8 @@
 We model the lifecycle over each patient's OWN timeline as a series of appointments. The first
 appointment (prev_as_of=None) is enrollment: the patient is high risk and we list every measure
 outside the healthy range. Each later appointment is assessed relative to the PREVIOUS one
-(prev_as_of): a measure newly outside the healthy range is flagged immediately; else if the
+(prev_as_of): a measure newly outside the healthy range is flagged immediately, but only when the
+modifiable risk did not fall (a falling risk is progress, never a setback); else if the
 modifiable risk (age held at enrollment) has fallen below threshold it is graduation; else we
 report the measures that changed by a clinically meaningful amount since the previous visit
 (progress if a flagged measure improved, setback if one worsened). Every stage yields
@@ -45,8 +46,14 @@ def assess(pid: str, base_row: pd.Series, as_of=None, prev_as_of=None, reenroll=
     graduation, merely because they got older."""
     when = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp(base_row["cutoff_date"])
     flagged_set = set(flagged) if flagged is not None else set()
-    # eval_row: REAL age (advanced to `when`) for drivers / SHAP / the clinician panel.
-    eval_row = risk.feature_row_at(base_row, when) if as_of is not None else base_row
+    # eval_row for drivers / SHAP / the clinician panel. On a FOLLOW-UP visit (enroll_date set) age
+    # is held at enrollment, exactly like the staging score, so age never inflates the displayed
+    # contributions stage to stage. Enrollment/selection uses real age (it belongs in who we reach).
+    if as_of is not None:
+        eval_row = risk.feature_row_at(
+            base_row, when, age_ref_date=(enroll_date if prev_as_of is not None else None))
+    else:
+        eval_row = base_row
     # staging score: age held at enrollment for follow-ups; real age at enrollment/selection.
     if as_of is not None:
         p_now = float(risk.calibrated_proba(
@@ -69,15 +76,22 @@ def assess(pid: str, base_row: pd.Series, as_of=None, prev_as_of=None, reenroll=
     # =========================== follow-up appointment ===========================
     if prev_as_of is not None:
         prev_when = pd.Timestamp(prev_as_of)
+        # Modifiable risk at the patient's previous contact (age held at enrollment). Every
+        # follow-up decision below is judged against this, so the direction always reflects the
+        # coachable trajectory rather than aging.
+        p_prev = float(risk.calibrated_proba(
+            risk.feature_row_at(base_row, prev_when, age_ref_date=enroll_date).to_frame().T)[0])
 
         # (1) NEW out-of-range measure: a measure outside the healthy range that we have never
         # flagged. Reported immediately as a state fact (single reading, like enrollment), because
         # being out of range is not visit-to-visit noise. This closes the gap where a measure that
         # is out of range the first time it is ever drawn would otherwise wait for a second reading
-        # to form a change. It is framed as a setback (something we also want to flag).
+        # to form a change. It is a SETBACK only when the modifiable risk did not FALL: if the
+        # patient's overall trajectory improved, the visit is progress (handled below), so we never
+        # label an improving patient with a setback.
         new_oor = [v for v in claims.out_of_range_vitals(pid, when, contribs)
                    if _norm(v["metric"]) not in flagged_set]
-        if new_oor:
+        if new_oor and p_now >= p_prev:
             cl = [claims.snapshot_bp(pid, when) if v["metric"] == "bp"
                   else claims.snapshot(pid, v["metric"], when) for v in new_oor]
             cl.append(claims.actionable({"feature": _VITAL_FEAT[new_oor[0]["metric"]],
@@ -105,10 +119,8 @@ def assess(pid: str, base_row: pd.Series, as_of=None, prev_as_of=None, reenroll=
 
         # (3) progress / setback. Changes are RCV-confirmed and out-of-range at one end. The veto
         # ("nothing else moved the other way") is scoped to FLAGGED measures, so an unflagged wiggle
-        # never silences real news. p_prev is the age-held score at the previous visit, so the
-        # direction check reflects the modifiable trajectory, not aging.
-        p_prev = float(risk.calibrated_proba(
-            risk.feature_row_at(base_row, prev_when, age_ref_date=enroll_date).to_frame().T)[0])
+        # never silences real news. p_prev (computed above) is the age-held score at the previous
+        # contact, so the direction check reflects the modifiable trajectory, not aging.
         changes = [c for c in (claims.change_since(pid, m, prev_when, when)
                                for m in claims.TREND_METRICS) if c]
         changes.sort(key=lambda c: -contribs.get(_METRIC_FEAT.get(c["metric"], ""), 0.0))

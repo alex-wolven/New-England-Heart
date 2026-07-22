@@ -34,7 +34,7 @@ def _series(pid, when, n=12):
     return out
 
 
-def _flatten(rec, eval_row, enriched_row, when, extra):
+def _flatten(rec, eval_row, enriched_row, when, extra, real_age=None):
     out = {**extra}
     for k in ("patient", "stage", "triage", "triage_reason", "message_en", "message_es",
               "source", "attempts", "patient_message", "blocked_message_en"):
@@ -48,7 +48,18 @@ def _flatten(rec, eval_row, enriched_row, when, extra):
     out["blocked_grounding_json"] = json.dumps(rec.get("blocked_grounding", []))
     out["citations_json"] = json.dumps(rec.get("citations", []))
     out["blocked_json"] = json.dumps(rec.get("blocked_reasons", []))
-    out["all_contribs_json"] = json.dumps(risk.all_contributions(eval_row))
+    contribs = risk.all_contributions(eval_row)
+    # drop labs with no reading as-of this stage (value None from the NaN mask) so the panel shows
+    # only measured vitals, consistent with the message and never a not-yet-drawn lab
+    _LABS = {"sbp", "dbp", "ldl", "hba1c", "total_chol", "hdl", "bmi", "trig", "egfr"}
+    contribs = [c for c in contribs if not (c["feature"] in _LABS and c["value"] is None)]
+    if real_age is not None:
+        # Show the patient's REAL age (it advances over time), but its SHAP contribution stays held
+        # at enrollment, matching the age-held risk score above so aging never inflates the panel.
+        for c in contribs:
+            if c["feature"] == "age_at_cutoff":
+                c["value"] = real_age
+    out["all_contribs_json"] = json.dumps(contribs)
     out["series_json"] = json.dumps(_series(rec["patient"], when))
     out["comorbid_json"] = json.dumps({c: int(enriched_row[c]) for c in COMORBID})
     return out
@@ -84,7 +95,8 @@ def _history(pid, row):
     Once enrolled, risk is scored with AGE HELD at the enrollment date, so the trajectory reflects
     the modifiable measures rather than aging. Three follow-up events:
       - new out-of-range measure: a vital outside the healthy range we have not flagged is reported
-        immediately (state fact, no buffer), consistent with how enrollment trusts a single reading;
+        immediately (state fact, no buffer), consistent with how enrollment trusts a single reading,
+        but only when the modifiable risk did not fall (a falling risk is progress, not a setback);
       - progress / setback: a risk move is messaged only when the current move confirms the previous
         one (down then down-or-flat = progress; up then up-or-flat = setback); a reversal seeds the
         next confirmation instead of firing;
@@ -111,7 +123,10 @@ def _history(pid, row):
             continue
         # enrolled: age held at enrollment, so the score moves only with the modifiable measures
         r = risk.score_at(row, d, age_ref_date=enroll_date)
-        # new out-of-range measure -> immediate setback (state fact), independent of the risk buffer
+        # new out-of-range measure -> immediate setback (state fact). assess() only labels it a
+        # setback when the modifiable risk did not fall; if the risk fell the patient is improving,
+        # so we do NOT consume the visit here and instead fall through to the graduation /
+        # progress-setback logic below (otherwise a genuine progress would be silently swallowed).
         if {norm(v["metric"]) for v in claims.out_of_range_vitals(pid, d, {})} - flagged:
             used = frozenset(flagged)  # flagged AS PASSED to assess; main() must replay this exact
             a = pipeline.lifecycle.assess(pid, row, as_of=d, prev_as_of=last_contact,
@@ -122,8 +137,8 @@ def _history(pid, row):
                 appts.append(("setback", d, last_contact, used, enroll_date))
                 flagged |= set(a.get("newly_flagged", []))
                 last_contact = d
-            pending, prev_risk, below_prev = None, r, (r <= thr)
-            continue
+                pending, prev_risk, below_prev = None, r, (r <= thr)
+                continue
         move = "down" if r < prev_risk - _EPS else ("up" if r > prev_risk + _EPS else "flat")
         # graduation: age-held risk at/below threshold confirmed over two consecutive checkups
         if r <= thr and below_prev:
@@ -204,9 +219,16 @@ def main(n_patients=10, dry=False):
                                          flagged=set(flagged), enroll_date=enroll_date)
             if not rec.get("patient_message") or rec["stage"] not in PATIENT_STAGES:
                 continue
-            eval_row = risk.feature_row_at(base.loc[pid], when)
+            # SHAP panel: hold age at enrollment on follow-ups so contributions do not drift up with
+            # aging (enrollment uses real age); the panel still DISPLAYS the real age value. Also MASK
+            # labs with no reading as-of this visit so the panel shows only measured vitals (matching
+            # the message), never a future cohort-cutoff value the patient had not been drawn for yet.
+            age_ref = enroll_date if prevd is not None else None
+            eval_row = risk.feature_row_at(base.loc[pid], when, age_ref_date=age_ref)
+            real_age = float(risk.feature_row_at(base.loc[pid], when)["age_at_cutoff"])
             rows.append(_flatten(rec, eval_row, sub_idx.loc[pid], when,
-                                 {"queue": "main", "order": order, "first_name": label}))
+                                 {"queue": "main", "order": order, "first_name": label},
+                                 real_age=real_age))
 
     out = pd.DataFrame(rows)
     config.ARTIFACTS.mkdir(exist_ok=True)
